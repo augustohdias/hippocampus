@@ -230,6 +230,65 @@ def install_claude_plugin():
     register_claude_plugin()
 
 
+def register_claude_hooks():
+    """Register Hippocampus hooks in ~/.claude/settings.json"""
+    settings_path = Path.home() / ".claude" / "settings.json"
+    scripts_dir = Path.home() / ".claude" / "plugins" / "hippocampus" / "scripts"
+
+    log_info("Registering Hippocampus hooks in ~/.claude/settings.json...")
+
+    # Read existing settings
+    settings: Dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except json.JSONDecodeError as e:
+            log_warn(f"Could not parse ~/.claude/settings.json, starting fresh: {e}")
+
+    hooks = settings.setdefault("hooks", {})
+
+    # Define hippocampus hooks with absolute paths.
+    # inject-memories fires on SessionStart, SubagentStart, and PostCompact.
+    # user-prompt-hook fires on UserPromptSubmit to detect memorization patterns.
+    inject_cmd = f'node "{scripts_dir}/inject-memories.cjs"'
+    nudge_cmd  = f'node "{scripts_dir}/user-prompt-hook.cjs"'
+    hippocampus_hooks = {
+        "SessionStart":    {"command": inject_cmd, "timeout": 30},
+        "SubagentStart":   {"command": inject_cmd, "timeout": 30},
+        "PostCompact":     {"command": inject_cmd, "timeout": 30},
+        "UserPromptSubmit":{"command": nudge_cmd,  "timeout": 10},
+    }
+
+    # Remove stale entries for events that are no longer used
+    stale_events = ["Stop"]
+    for event in stale_events:
+        if event in hooks:
+            hooks[event] = [
+                g for g in hooks[event]
+                if not any("hippocampus" in h.get("command", "") for h in g.get("hooks", []))
+            ]
+            if not hooks[event]:
+                del hooks[event]
+
+    for event, cfg in hippocampus_hooks.items():
+        hook_entry = {"hooks": [{"type": "command", "command": cfg["command"], "timeout": cfg["timeout"]}]}
+        existing = hooks.setdefault(event, [])
+
+        # Remove any stale hippocampus entries (identified by script path)
+        hooks[event] = [
+            g for g in existing
+            if not any(
+                "hippocampus" in h.get("command", "")
+                for h in g.get("hooks", [])
+            )
+        ]
+        hooks[event].append(hook_entry)
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    log_success("Hippocampus hooks registered in ~/.claude/settings.json")
+
+
 def register_claude_plugin():
     """Register Hippocampus MCP server and install plugin with Claude Code"""
     plugin_dir = Path.home() / ".hippocampus" / "hippocampus-claude"
@@ -266,7 +325,9 @@ def register_claude_plugin():
         claude_plugins_dir = Path.home() / ".claude" / "plugins"
         target_plugin_dir = claude_plugins_dir / "hippocampus"
         if target_plugin_dir.exists():
-            log_info("Plugin already exists in ~/.claude/plugins/hippocampus, skipping copy")
+            log_info("Updating plugin in ~/.claude/plugins/hippocampus...")
+            shutil.copytree(plugin_path, target_plugin_dir, dirs_exist_ok=True)
+            log_success("Plugin updated in ~/.claude/plugins/hippocampus")
         else:
             log_info("Copying plugin to ~/.claude/plugins/hippocampus for auto-discovery...")
             shutil.copytree(plugin_path, target_plugin_dir)
@@ -276,7 +337,10 @@ def register_claude_plugin():
         log_info("Note: The plugin may need to be enabled manually if not auto-discovered.")
         log_info(f"Plugin directory: {plugin_path}")
         log_info(f"To load plugin for a session, use: claude --plugin-dir {plugin_path}")
-        
+
+        # Register hooks in ~/.claude/settings.json
+        register_claude_hooks()
+
     except subprocess.CalledProcessError as e:
         log_warn(f"Failed to register/install plugin: {e}")
         log_info("You may need to run the commands manually:")
@@ -546,7 +610,7 @@ def config_only_mode():
 def claude_plugin_only_mode():
     """Claude Code plugin-only mode (called from Makefile)"""
     log_info("Running in Claude plugin-only mode...")
-    install_claude_plugin()
+    install_claude_plugin()  # calls register_claude_plugin -> register_claude_hooks
     log_success("Claude Code plugin installation complete!")
 
 

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
  * Hippocampus UserPromptSubmit Hook
- * Searches memories based on user query and injects relevant ones
+ * Detects memory-creation patterns in the user prompt and injects a nudge
+ * instructing Claude to use the hippocampus_create_memory MCP tool.
  */
 
-const HIPPOCAMPUS_BINARY = process.env.HIPPOCAMPUS_BINARY || "hippocampus";
-const DEFAULT_PORT = 8765;
-const PORT_RANGE = 10; // Try ports 8765-8774
-
-function writeOutput(data) {
-  console.log(JSON.stringify(data));
+function writeOutput(additionalContext) {
+  const out = { hookSpecificOutput: { hookEventName: "UserPromptSubmit" } };
+  if (additionalContext)
+    out.hookSpecificOutput.additionalContext = additionalContext;
+  console.log(JSON.stringify(out));
 }
 
 // Debug logging to file (when HIPPOCAMPUS_DEBUG=true)
@@ -17,23 +17,28 @@ const LOG_FILE = "/tmp/hippocampus-cc-plugin.log";
 function log(message, data) {
   if (process.env.HIPPOCAMPUS_DEBUG === "true") {
     try {
-      const fs = require('fs');
+      const fs = require("fs");
       const timestamp = new Date().toISOString();
       const dataStr = data ? ` ${JSON.stringify(data, null, 2)}` : "";
-      const logLine = `[${timestamp}] [hippocampus-cc-plugin] ${message}${dataStr}\n`;
-      fs.appendFileSync(LOG_FILE, logLine, { encoding: 'utf8' });
-    } catch (error) {
-      // If file writing fails, fallback to silent (no output)
+      fs.appendFileSync(
+        LOG_FILE,
+        `[${timestamp}] [user-prompt-hook] ${message}${dataStr}\n`,
+        { encoding: "utf8" },
+      );
+    } catch {
+      /* silent */
     }
   }
 }
 
 async function readInput() {
   return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => {
       try {
         resolve(data.trim() ? JSON.parse(data) : {});
       } catch {
@@ -43,253 +48,102 @@ async function readInput() {
   });
 }
 
-function getProjectName(cwd) {
-  const pathParts = cwd.split("/").filter(p => p && p !== "opencode");
-  return pathParts.length > 0 ? pathParts[pathParts.length - 1] : "default";
-}
+// Memory creation patterns (Portuguese) — mirrors index.ts in hippocampus-opencode
+const MEMORY_PATTERNS = [
+  // Portuguese patterns
+  /\blembre-se\b/i,
+  /\bse lembre\b/i,
+  /\bmemorize\b/i,
+  /\bguarde\b/i,
+  /\bguarde em memória\b/i,
+  /\bguarde em memoria\b/i,
+  /\bcrie uma memória\b/i,
+  /\bcrie memória\b/i,
+  /\bcrie memorias\b/i,
+  /\bcrie uma memoria\b/i,
+  /\bcrie memorías\b/i,
 
-// Helper function to check if a server at a given base URL is hippocampus
-async function isHippocampusServer(baseUrl) {
-  try {
-    // First try the /api/who endpoint (more specific)
-    const whoUrl = `${baseUrl}/who`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1000);
-    const whoResponse = await fetch(whoUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-    
-    if (whoResponse.ok) {
-      const whoData = await whoResponse.json();
-      return whoData.service === 'hippocampus';
-    }
-    
-    // Fallback to /api/health endpoint (for backward compatibility)
-    const healthUrl = `${baseUrl}/health`;
-    const healthController = new AbortController();
-    const healthTimeout = setTimeout(() => healthController.abort(), 1000);
-    const healthResponse = await fetch(healthUrl, { signal: healthController.signal });
-    clearTimeout(healthTimeout);
-    
-    if (healthResponse.ok) {
-      const healthData = await healthResponse.json();
-      return healthData.service === 'hippocampus';
-    }
-    
-    return false;
-  } catch {
-    return false;
-  }
-}
+  // English - Explicit commands
+  /\bremember\b/i,
+  /\bsave\b/i,
+  /\bstore\b/i,
+  /\bnote\b/i,
+  /\brecord\b/i,
+  /\bdon't forget\b/i,
+  /\bdo not forget\b/i,
+  /\bmake sure to remember\b/i,
+  /\bthis is important\b/i,
+  /\bkeep in mind\b/i,
+  /\bkeep this in mind\b/i,
+  /\bremember this\b/i,
+  /\bsave this to memory\b/i,
+  /\bmake a note\b/i,
 
-// Helper functions for server management
-async function discoverHippocampusPort() {
-  // If environment variable is set, use it directly
-  const envUrl = process.env.HIPPOCAMPUS_HTTP_URL;
-  if (envUrl) {
-    // Extract port from URL if it's a full URL, or use as-is
-    try {
-      const url = new URL(envUrl);
-      return envUrl; // Return full URL
-    } catch {
-      // Assume it's already a full URL or just a port
-      // If it's just a number, assume it's a port
-      if (/^\d+$/.test(envUrl)) {
-        return `http://localhost:${envUrl}/api`;
-      }
-      return envUrl;
-    }
-  }
+  // English - Preferences and conventions
+  /\balways use\b/i,
+  /\bnever use\b/i,
+  /\bprefer\b/i,
+  /\bpreferred\b/i,
+  /\bby convention\b/i,
+  /\bconvention\b/i,
+  /\bstandard practice\b/i,
+  /\bproject uses\b/i,
+  /\bwe use\b/i,
+  /\bour setup\b/i,
+  /\bour stack\b/i,
+  /\bconfigured to\b/i,
+  /\bconfigured for\b/i,
+  /\bsetup to\b/i,
 
-  // Try ports in sequence
-  for (let i = 0; i < PORT_RANGE; i++) {
-    const port = DEFAULT_PORT + i;
-    const baseUrl = `http://localhost:${port}/api`;
-    try {
-      // Check if this is a hippocampus server
-      if (await isHippocampusServer(baseUrl)) {
-        return baseUrl;
-      }
-    } catch {
-      // Continue to next port
-    }
-  }
-  
-  return null;
-}
+  // English - Knowledge statements
+  /\bthe key is\b/i,
+  /\bthe trick is\b/i,
+  /\bimportant note\b/i,
+  /\bworkaround\b/i,
+  /\bsolution for\b/i,
+  /\bfix for\b/i,
+];
 
-async function getApiBase() {
-  return await discoverHippocampusPort();
-}
+const MEMORY_NUDGE_MESSAGE = `[HIPPOCAMPUS MEMORY CREATION TRIGGER]
 
-async function checkApiAvailable() {
-  const apiBase = await getApiBase();
-  const available = apiBase !== null;
-  log("Checking API availability", { available, apiBase });
-  return available;
-}
+The user wants you to create a memory. You MUST use the \`hippocampus_create_memory\` MCP tool. Try to split the information into multiple small memories to prevent context flooding:
 
-async function startHippocampusServer() {
-  try {
-    const { spawn } = require('child_process');
-    log("Starting hippocampus server with setsid", { binary: HIPPOCAMPUS_BINARY });
-    
-    // Spawn server with setsid to detach from terminal
-    const proc = spawn('setsid', [HIPPOCAMPUS_BINARY, '--http'], {
-      stdio: 'ignore',
-      detached: true,
-    });
-    proc.unref();
-    
-    log("Server spawned with setsid", { pid: proc.pid });
-    
-    // Wait a bit for server to start
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Check if process is still alive (optional)
-    const alive = !proc.killed;
-    log("Server status after 2s", { pid: proc.pid, alive });
-    return alive;
-  } catch (error) {
-    log("Failed to spawn with setsid", { error: error.message });
-    
-    // Fallback to direct spawn
-    try {
-      const { spawn } = require('child_process');
-      log("Trying fallback spawn without setsid", { binary: HIPPOCAMPUS_BINARY });
-      
-      const proc = spawn(HIPPOCAMPUS_BINARY, ['--http'], {
-        stdio: 'ignore',
-        detached: true,
-      });
-      proc.unref();
-      
-      log("Server spawned without setsid", { pid: proc.pid });
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const alive = !proc.killed;
-      log("Server status after 2s (fallback)", { pid: proc.pid, alive });
-      return alive;
-    } catch (error2) {
-      log("Fallback spawn also failed", { error: error2.message });
-      return false;
-    }
-  }
-}
+**Required fields:**
+- \`content\`: The information to remember (max 250 words)
+- \`context\`: Category (e.g., "Code Style", "Project Setup", "Preferences")
+- \`keywords\`: Comma-separated keywords for search
 
-async function ensureApiAvailable() {
-  // First check if API is already available
-  if (await checkApiAvailable()) {
-    return true;
-  }
-  
-  // Try to start the server
-  const started = await startHippocampusServer();
-  if (!started) {
-    return false;
-  }
-  
-  // Give server more time to start (connect to Qdrant, load Ollama model, etc.)
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  
-  // Wait and retry check with more attempts
-  for (let i = 0; i < 10; i++) {
-    if (await checkApiAvailable()) {
-      return true;
-    }
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-  
-  return false;
-}
+**Optional fields:**
+- \`scope\`: Memory scope (default: "project")
 
-async function searchMemories(query, project, limit = 5) {
-  // Ensure API is available (start server if needed)
-  const apiAvailable = await ensureApiAvailable();
-  if (!apiAvailable) {
-    return null;
-  }
+**Special fields:**
+- \`project\`: Project name. Mandatory when scope is "project". Use only the last directory name of the current path.
 
-  // Get the actual API base URL (with discovered port)
-  const apiBase = await getApiBase();
-  if (!apiBase) {
-    return null;
-  }
+**Scope Guidance:**
+1. **Default scope is "project"**: Use for project-specific information (code style, setup, conventions).
+2. **Global scope ("global")**: Must be EXPLICITLY requested by the user. Use for information that applies across all projects.
+3. **Personal scope ("personal")**: Use for user-specific personal information: name, age, hobbies, conversation tone preferences.
 
-  try {
-    // Build search URL
-    let searchUrl = `${apiBase}/search?query=${encodeURIComponent(query)}&limit=${limit}`;
-    if (project) {
-      searchUrl += `&project=${encodeURIComponent(project)}`;
-    }
-    
-    const searchResp = await fetch(searchUrl);
-    
-    if (searchResp.ok) {
-      const searchData = await searchResp.json();
-      return searchData.results || [];
-    }
-
-    return [];
-  } catch {
-    return null;
-  }
-}
-
-function formatMemoriesContext(memories) {
-  if (!memories || memories.length === 0) {
-    return "";
-  }
-
-  let context = `<hippocampus_memories_relevant_to_query>\n`;
-  context += `**${memories.length} relevant memories found:**\n\n`;
-  
-  memories.forEach((r, idx) => {
-    const memory = r.memory;
-    const score = (r.score * 100).toFixed(0);
-    context += `**Memory ${idx + 1}** (Relevance: ${score}%) — ${memory.project} — ${memory.context}\n`;
-    context += `${memory.content}\n`;
-    context += `_Keywords: ${memory.keywords.join(", ")}_\n\n`;
-  });
-
-  context += `</hippocampus_memories_relevant_to_query>`;
-  return context;
-}
+DO NOT skip this step. The user explicitly asked you to remember this information.`;
 
 async function main() {
   const input = await readInput();
-  const cwd = input.cwd || process.cwd();
-  const project = getProjectName(cwd);
   const userPrompt = input.prompt || input.text || "";
-  
-  log("UserPromptSubmit hook invoked", { project, userPromptLength: userPrompt.length });
-  
-  let additionalContext = "";
-  
-  if (userPrompt.trim()) {
-    const searchResults = await searchMemories(userPrompt, project, 3);
-    
-    if (searchResults === null) {
-      additionalContext = `<hippocampus_memories_relevant_to_query>\n⚠️ Could not connect to Hippocampus API.\n</hippocampus_memories_relevant_to_query>`;
-    } else if (searchResults.length > 0) {
-      additionalContext = formatMemoriesContext(searchResults);
-    } else {
-      // No relevant memories found - silent (no injection)
-    }
+
+  log("UserPromptSubmit hook invoked", { promptLength: userPrompt.length });
+
+  const detected = MEMORY_PATTERNS.some((pattern) => pattern.test(userPrompt));
+  log("Memory pattern detection", { detected });
+
+  if (detected) {
+    log("Pattern matched — injecting nudge");
+    writeOutput(MEMORY_NUDGE_MESSAGE);
+  } else {
+    writeOutput(undefined);
   }
-  
-  writeOutput({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: additionalContext || undefined,
-    },
-  });
 }
 
-main().catch(err => {
-  writeOutput({
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: `<hippocampus_memories_relevant_to_query>\n❌ Error: ${err.message}\n</hippocampus_memories_relevant_to_query>`,
-    },
-  });
+main().catch((err) => {
+  log("Unhandled error", { error: err.message });
+  writeOutput(undefined);
 });

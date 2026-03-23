@@ -575,26 +575,40 @@ func (c *Client) DeleteAllMemories(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) ListMemories(ctx context.Context, filterProject string, filterKeywords []string, limit uint64) ([]Memory, error) {
-	// Build filter for project only (keywords filtered client-side)
-	var filter *qdrant.Filter
+func (c *Client) ListMemories(ctx context.Context, filterProject string, filterKeywords []string, limit uint64, filterScope string) ([]Memory, error) {
+	// Build filter conditions for project and/or scope (keywords filtered client-side)
+	var conditions []*qdrant.Condition
 	if filterProject != "" {
-		filter = &qdrant.Filter{
-			Must: []*qdrant.Condition{
-				{
-					ConditionOneOf: &qdrant.Condition_Field{
-						Field: &qdrant.FieldCondition{
-							Key: "project",
-							Match: &qdrant.Match{
-								MatchValue: &qdrant.Match_Keyword{
-									Keyword: filterProject,
-								},
-							},
+		conditions = append(conditions, &qdrant.Condition{
+			ConditionOneOf: &qdrant.Condition_Field{
+				Field: &qdrant.FieldCondition{
+					Key: "project",
+					Match: &qdrant.Match{
+						MatchValue: &qdrant.Match_Keyword{
+							Keyword: filterProject,
 						},
 					},
 				},
 			},
-		}
+		})
+	}
+	if filterScope != "" {
+		conditions = append(conditions, &qdrant.Condition{
+			ConditionOneOf: &qdrant.Condition_Field{
+				Field: &qdrant.FieldCondition{
+					Key: "scope",
+					Match: &qdrant.Match{
+						MatchValue: &qdrant.Match_Keyword{
+							Keyword: filterScope,
+						},
+					},
+				},
+			},
+		})
+	}
+	var filter *qdrant.Filter
+	if len(conditions) > 0 {
+		filter = &qdrant.Filter{Must: conditions}
 	}
 
 	// Use map to deduplicate by memory_id (since we have multiple points per memory)

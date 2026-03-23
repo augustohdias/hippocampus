@@ -290,21 +290,7 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 // then applies an optional in-memory scope filter before returning.
 func (s *Service) ListMemories(ctx context.Context, filterProject string, filterKeywords []string, scope string, limit uint64) ([]qdrant.Memory, error) {
 	filterProject = sanitizeProject(filterProject)
-	memories, err := s.qdrant.ListMemories(ctx, filterProject, filterKeywords, limit)
-	if err != nil {
-		return nil, err
-	}
-	// Filter by scope if provided
-	if scope != "" {
-		filtered := make([]qdrant.Memory, 0, len(memories))
-		for _, memory := range memories {
-			if memory.Scope == scope {
-				filtered = append(filtered, memory)
-			}
-		}
-		memories = filtered
-	}
-	return memories, nil
+	return s.qdrant.ListMemories(ctx, filterProject, filterKeywords, limit, scope)
 }
 
 // DeleteMemory removes a single memory point from Qdrant by its ID.

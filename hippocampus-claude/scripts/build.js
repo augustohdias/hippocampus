@@ -12,9 +12,7 @@ if (!fs.existsSync(OUT)) {
 }
 
 const scripts = [
-  "session-start",
-  "session-stop",
-  "command-handler",
+  "inject-memories",
   "user-prompt-hook",
 ];
 
