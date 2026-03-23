@@ -1,0 +1,2 @@
+USER: I want to remember this important decision: use subagents always.
+ASSISTANT: Okay, I will remember that.

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hippocampus": {
+      "type": "stdio",
+      "command": "hippocampus"
+    }
+  }
+}

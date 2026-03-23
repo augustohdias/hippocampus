@@ -1,0 +1,15 @@
+{
+  "name": "hippocampus",
+  "version": "0.0.1",
+  "description": "Persistent memory across Claude Code sessions using Hippocampus MCP",
+  "author": {
+    "name": "Augusto Dias",
+    "email": "augusto@example.com"
+  },
+  "mcpServers": {
+    "hippocampus": {
+      "type": "stdio",
+      "command": "hippocampus"
+    }
+  }
+}

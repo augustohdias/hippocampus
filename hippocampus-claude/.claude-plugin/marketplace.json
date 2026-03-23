@@ -1,0 +1,18 @@
+{
+  "name": "hippocampus-plugins",
+  "owner": {
+    "name": "Augusto Dias",
+    "email": "augusto@example.com"
+  },
+  "plugins": [
+    {
+      "name": "hippocampus",
+      "source": "./plugin",
+      "description": "Persistent memory across Claude Code sessions using Hippocampus MCP",
+      "version": "0.0.1",
+      "author": {
+        "name": "Augusto Dias"
+      }
+    }
+  ]
+}
