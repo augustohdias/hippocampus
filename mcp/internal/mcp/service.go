@@ -1,3 +1,5 @@
+// Package mcp provides the implementation of all tools
+// that are available for HTTP and MCP servers.
 package mcp
 
 import (
@@ -21,6 +23,7 @@ type Service struct {
 	qdrant *qdrant.Client
 }
 
+// NewService initializes Ollama and Qdrant clients and returns a ready-to-use Service.
 func NewService(cfg *config.Config) (*Service, error) {
 	ollamaClient := ollama.NewClient(cfg.OllamaHost, cfg.OllamaModel)
 	qdrantClient, err := qdrant.NewClient(cfg.QdrantHost, cfg.QdrantCollection)
@@ -35,6 +38,7 @@ func NewService(cfg *config.Config) (*Service, error) {
 	}, nil
 }
 
+// Close releases the Qdrant client connection.
 func (s *Service) Close() error {
 	if s.qdrant != nil {
 		return s.qdrant.Close()
@@ -42,6 +46,8 @@ func (s *Service) Close() error {
 	return nil
 }
 
+// EnsureCollection probes Ollama for the embedding vector size and creates the Qdrant
+// collection with the correct dimensions if it does not already exist.
 func (s *Service) EnsureCollection(ctx context.Context) error {
 	embedding, err := s.ollama.GetEmbedding("test")
 	if err != nil {
@@ -52,10 +58,12 @@ func (s *Service) EnsureCollection(ctx context.Context) error {
 	return s.qdrant.EnsureCollection(ctx, vectorSize)
 }
 
+// CreateMemory validates the scope, builds multiple named embeddings (main, project, context,
+// content, scope, and up to 5 individual keywords), and upserts a single Qdrant point
+// with all vectors attached. Returns the generated memory ID on success.
 func (s *Service) CreateMemory(ctx context.Context, project, context, content string, keywords []string, scope string) (uint64, error) {
 	memoryID := generateID()
 
-	// Validate and set default scope
 	if scope == "" {
 		scope = qdrant.DefaultScope()
 	}
@@ -63,24 +71,19 @@ func (s *Service) CreateMemory(ctx context.Context, project, context, content st
 		return 0, fmt.Errorf("invalid scope: %s, must be one of: %s, %s, %s", scope, qdrant.ScopeGlobal, qdrant.ScopePersonal, qdrant.ScopeProject)
 	}
 
-	// Build list of texts to generate embeddings for
 	var embeddingTexts []string
 	var vectorNames []string
 
-	// Determine if we should include project in main embedding
 	includeProjectInMain := scope == qdrant.ScopeProject
 
-	// Main embedding (combined)
 	var mainText string
 	if includeProjectInMain {
-		// For project scope: include project in main embedding
 		mainText = fmt.Sprintf("<%s>\n<%s>\n<%s>\n<%s>",
 			project,
 			context,
 			content,
 			strings.Join(keywords, ", "))
 	} else {
-		// For global/personal scope: exclude project from main embedding
 		mainText = fmt.Sprintf("<%s>\n<%s>\n<%s>",
 			context,
 			content,
@@ -89,42 +92,34 @@ func (s *Service) CreateMemory(ctx context.Context, project, context, content st
 	embeddingTexts = append(embeddingTexts, mainText)
 	vectorNames = append(vectorNames, qdrant.VectorMain)
 
-	// Project parameter embedding (always)
 	if project != "" {
 		embeddingTexts = append(embeddingTexts, fmt.Sprintf("<%s>", project))
 		vectorNames = append(vectorNames, qdrant.VectorProject)
 	}
 
-	// Context parameter embedding (if provided)
 	if context != "" {
 		embeddingTexts = append(embeddingTexts, fmt.Sprintf("<%s>", context))
 		vectorNames = append(vectorNames, qdrant.VectorContext)
 	}
 
-	// Content parameter embedding (always required, but check anyway)
 	if content != "" {
 		embeddingTexts = append(embeddingTexts, fmt.Sprintf("<%s>", content))
 		vectorNames = append(vectorNames, qdrant.VectorContent)
 	}
 
-	// Scope embedding (for global and personal scopes)
 	if scope == qdrant.ScopeGlobal || scope == qdrant.ScopePersonal {
 		embeddingTexts = append(embeddingTexts, fmt.Sprintf("<%s>", scope))
 		vectorNames = append(vectorNames, qdrant.VectorScope)
 	}
 
-	// First 5 keywords (each individually, 1-indexed)
 	maxKeywords := 5
-	if len(keywords) < maxKeywords {
-		maxKeywords = len(keywords)
-	}
+	maxKeywords = min(len(keywords), maxKeywords)
+
 	for i := 0; i < maxKeywords; i++ {
 		embeddingTexts = append(embeddingTexts, fmt.Sprintf("<%s>", keywords[i]))
-		// Use keyword1, keyword2, ... keyword5
 		vectorNames = append(vectorNames, fmt.Sprintf("keyword%d", i+1))
 	}
 
-	// Generate all embeddings
 	embeddings := make([][]float32, 0, len(embeddingTexts))
 	for _, text := range embeddingTexts {
 		embedding, err := s.ollama.GetEmbedding(text)
@@ -134,14 +129,13 @@ func (s *Service) CreateMemory(ctx context.Context, project, context, content st
 		embeddings = append(embeddings, embedding)
 	}
 
-	// Create a single memory with multiple named vectors
 	embeddingsMap := make(map[string][]float32)
 	for i, embedding := range embeddings {
 		embeddingsMap[vectorNames[i]] = embedding
 	}
 	memory := qdrant.Memory{
 		ID:         memoryID,
-		PointID:    memoryID, // Single point ID (same as memory ID)
+		PointID:    memoryID,
 		Project:    project,
 		Context:    context,
 		Content:    content,
@@ -157,20 +151,18 @@ func (s *Service) CreateMemory(ctx context.Context, project, context, content st
 	return memoryID, nil
 }
 
+// SearchMemories builds a list of query embeddings for better matching with corresponding
+// vector names: (1) combined query -> "main", (2) project -> "project",
+// (3) context -> "context" if provided, (4) scope-only -> "scope" for global/personal,
+// (5) each keyword individually -> "keyword1" ... "keyword5".
+// Results are deduplicated by memory ID, keeping the highest similarity score.
 func (s *Service) SearchMemories(ctx context.Context, project, context, keywords, scope string, limit uint64) ([]qdrant.SearchResult, error) {
-	// Build list of query embeddings for better matching with corresponding vector names:
-	// 1. Combined query -> "main"
-	// 2. Project parameter -> "project"
-	// 3. Context parameter -> "context" (if provided)
-	// 4. Scope-only -> "scope" (if scope is global or personal)
-	// 5. Each keyword individually -> "keyword1", "keyword2", ... up to 5
 	type query struct {
 		text       string
 		vectorName string
 	}
 	var queries []query
 
-	// Combined query (main)
 	queryParts := []string{project}
 	if context != "" {
 		queryParts = append(queryParts, context)
@@ -178,7 +170,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 	if keywords != "" {
 		queryParts = append(queryParts, keywords)
 	}
-	// Include scope in query if provided (helps match scope-specific embeddings)
 	if scope != "" && (scope == qdrant.ScopeGlobal || scope == qdrant.ScopePersonal) {
 		queryParts = append(queryParts, scope)
 	}
@@ -191,7 +182,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		vectorName: qdrant.VectorMain,
 	})
 
-	// Project parameter query (always if project provided)
 	if project != "" {
 		queries = append(queries, query{
 			text:       fmt.Sprintf("<%s>", project),
@@ -199,7 +189,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		})
 	}
 
-	// Context parameter query (if provided)
 	if context != "" {
 		queries = append(queries, query{
 			text:       fmt.Sprintf("<%s>", context),
@@ -207,7 +196,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		})
 	}
 
-	// Scope-only query (for global/personal scopes)
 	if scope == qdrant.ScopeGlobal || scope == qdrant.ScopePersonal {
 		queries = append(queries, query{
 			text:       fmt.Sprintf("<%s>", scope),
@@ -215,13 +203,10 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		})
 	}
 
-	// Individual keyword queries (up to 5 keywords)
 	if keywords != "" {
 		rawKeywords := strings.Split(keywords, ",")
 		maxKeywords := 5
-		if len(rawKeywords) < maxKeywords {
-			maxKeywords = len(rawKeywords)
-		}
+		maxKeywords = min(len(rawKeywords), maxKeywords)
 		for i := 0; i < maxKeywords; i++ {
 			trimmed := strings.TrimSpace(rawKeywords[i])
 			if trimmed != "" {
@@ -233,7 +218,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		}
 	}
 
-	// Generate all query embeddings
 	type queryEmbedding struct {
 		embedding  []float32
 		vectorName string
@@ -250,11 +234,9 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		})
 	}
 
-	// Search with each embedding (using corresponding vector name) and merge results
 	scoreThreshold := s.cfg.SearchScoreThreshold
-	allResults := make(map[uint64]qdrant.SearchResult) // Deduplicate by memory ID, keep highest score
+	allResults := make(map[uint64]qdrant.SearchResult)
 
-	// Prepare slices for batch search
 	embeddings := make([][]float32, 0, len(queryEmbeddings))
 	vectorNames := make([]string, 0, len(queryEmbeddings))
 	for _, qe := range queryEmbeddings {
@@ -262,13 +244,11 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		vectorNames = append(vectorNames, qe.vectorName)
 	}
 
-	// Perform batch search
 	resultsBatch, err := s.qdrant.SearchMemoriesBatch(ctx, embeddings, limit, scoreThreshold, vectorNames)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search memories: %w", err)
 	}
 
-	// Merge results from each batch (each batch corresponds to a query embedding)
 	for _, batchResults := range resultsBatch {
 		for _, result := range batchResults {
 			existing, exists := allResults[result.Memory.ID]
@@ -278,18 +258,15 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		}
 	}
 
-	// Convert map to slice and sort by similarity (descending)
 	results := make([]qdrant.SearchResult, 0, len(allResults))
 	for _, result := range allResults {
 		results = append(results, result)
 	}
 
-	// Sort by similarity descending
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Similarity > results[j].Similarity
 	})
 
-	// Filter by scope if provided
 	if scope != "" {
 		filtered := make([]qdrant.SearchResult, 0, len(results))
 		for _, result := range results {
@@ -300,7 +277,6 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 		results = filtered
 	}
 
-	// Apply limit
 	if uint64(len(results)) > limit {
 		results = results[:limit]
 	}
@@ -308,6 +284,8 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 	return results, nil
 }
 
+// ListMemories retrieves memories from Qdrant filtered by project and keywords,
+// then applies an optional in-memory scope filter before returning.
 func (s *Service) ListMemories(ctx context.Context, filterProject string, filterKeywords []string, scope string, limit uint64) ([]qdrant.Memory, error) {
 	memories, err := s.qdrant.ListMemories(ctx, filterProject, filterKeywords, limit)
 	if err != nil {
@@ -326,22 +304,27 @@ func (s *Service) ListMemories(ctx context.Context, filterProject string, filter
 	return memories, nil
 }
 
+// DeleteMemory removes a single memory point from Qdrant by its ID.
 func (s *Service) DeleteMemory(ctx context.Context, memoryID uint64) error {
 	return s.qdrant.DeleteMemory(ctx, memoryID)
 }
 
+// DeleteMemoriesByProject removes all memory points associated with the given project.
 func (s *Service) DeleteMemoriesByProject(ctx context.Context, project string) error {
 	return s.qdrant.DeleteMemoriesByProject(ctx, project)
 }
 
+// DeleteAllMemories wipes the entire Qdrant collection.
 func (s *Service) DeleteAllMemories(ctx context.Context) error {
 	return s.qdrant.DeleteAllMemories(ctx)
 }
 
+// generateID returns a random uint64 to use as a memory point ID.
 func generateID() uint64 {
 	return rand.Uint64()
 }
 
+// SetupTools registers all MCP tool handlers (create, search, list, delete) on the given server.
 func (s *Service) SetupTools(server *mcp.Server) error {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "create_memory",
@@ -470,6 +453,9 @@ func (s *Service) SetupTools(server *mcp.Server) error {
 	return nil
 }
 
+// handleCreateMemory validates input fields (content required, max 250 words, scope valid,
+// project required for project scope), parses comma-separated keywords (max 5),
+// and delegates to CreateMemory.
 func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	project, _ := input["project"].(string)
 	contextStr, _ := input["context"].(string)
@@ -477,7 +463,6 @@ func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolReque
 	keywordsStr, _ := input["keywords"].(string)
 	scopeStr, _ := input["scope"].(string)
 
-	// Validate required fields
 	if content == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -487,7 +472,6 @@ func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// Validate content length (max 250 words)
 	wordCount := len(strings.Fields(content))
 	if wordCount > 250 {
 		return &mcp.CallToolResult{
@@ -498,28 +482,25 @@ func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// Parse keywords (comma-separated, max 20)
 	var keywords []string
 	if keywordsStr != "" {
-		rawKeywords := strings.Split(keywordsStr, ",")
-		for _, kw := range rawKeywords {
+		rawKeywords := strings.SplitSeq(keywordsStr, ",")
+		for kw := range rawKeywords {
 			trimmed := strings.TrimSpace(kw)
 			if trimmed != "" {
 				keywords = append(keywords, trimmed)
 			}
 		}
-		if len(keywords) > 20 {
-			keywords = keywords[:20]
+		if len(keywords) > 5 {
+			keywords = keywords[:5]
 		}
 	}
 
-	// Determine scope
 	scope := scopeStr
 	if scope == "" {
 		scope = qdrant.DefaultScope()
 	}
 
-	// Validate scope
 	if !qdrant.ValidScope(scope) {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -529,7 +510,6 @@ func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// Project is required only for project scope; ignored for global/personal
 	if scope == qdrant.ScopeProject && project == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -559,24 +539,21 @@ func (s *Service) handleCreateMemory(ctx context.Context, req *mcp.CallToolReque
 	}, nil
 }
 
+// handleSearchMemories validates the optional scope and enforces that project is provided
+// when scope is "project". Delegates to SearchMemories and formats results with similarity percentages.
 func (s *Service) handleSearchMemories(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	project, _ := input["project"].(string)
 	contextStr, _ := input["context"].(string)
 	keywordsStr, _ := input["keywords"].(string)
 	scopeStr, _ := input["scope"].(string)
 
-	// Project is required only when scope is "project" (will be validated later)
-	// For other scopes or no scope, project is optional
-
 	limit := uint64(10)
 	if limitVal, ok := input["limit"].(float64); ok {
 		limit = uint64(limitVal)
 	}
 
-	// Determine scope (optional parameter)
 	scope := scopeStr
 
-	// Validate scope if provided
 	if scope != "" && !qdrant.ValidScope(scope) {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -586,7 +563,6 @@ func (s *Service) handleSearchMemories(ctx context.Context, req *mcp.CallToolReq
 		}, nil, nil
 	}
 
-	// If scope is "project", project parameter is required
 	if scope == qdrant.ScopeProject && project == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -628,12 +604,13 @@ func (s *Service) handleSearchMemories(ctx context.Context, req *mcp.CallToolReq
 	}, nil
 }
 
+// handleListMemories requires scope, enforces project for project-scope, rejects project
+// for non-project scopes, and disallows the keywords parameter. Delegates to ListMemories.
 func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	project, _ := input["project"].(string)
 	keywordsStr, _ := input["keywords"].(string)
 	scopeStr, _ := input["scope"].(string)
 
-	// Scope is required for list operation
 	if scopeStr == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -645,7 +622,6 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 
 	scope := scopeStr
 
-	// Validate scope
 	if !qdrant.ValidScope(scope) {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -655,7 +631,6 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// If scope is "project", project parameter is required
 	if scope == qdrant.ScopeProject && project == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -665,7 +640,6 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// If scope is not "project", project parameter should not be provided
 	if scope != qdrant.ScopeProject && project != "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -675,7 +649,6 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 		}, nil, nil
 	}
 
-	// Keywords parameter is not allowed for list operation
 	if keywordsStr != "" {
 		return &mcp.CallToolResult{
 			IsError: true,
@@ -688,9 +661,7 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 	limit := uint64(50)
 	if limitVal, ok := input["limit"].(float64); ok {
 		limit = uint64(limitVal)
-		if limit > 100 {
-			limit = 100
-		}
+		limit = min(limit, 100)
 	}
 
 	memories, err := s.ListMemories(ctx, project, nil, scope, limit)
@@ -722,6 +693,7 @@ func (s *Service) handleListMemories(ctx context.Context, req *mcp.CallToolReque
 	}, nil
 }
 
+// handleDeleteMemory parses and validates the memory_id string parameter, then delegates to DeleteMemory.
 func (s *Service) handleDeleteMemory(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	memoryIDStr, ok := input["memory_id"].(string)
 	if !ok {
@@ -759,6 +731,7 @@ func (s *Service) handleDeleteMemory(ctx context.Context, req *mcp.CallToolReque
 	}, nil
 }
 
+// handleDeleteMemoriesByProject validates that project is provided, then delegates to DeleteMemoriesByProject.
 func (s *Service) handleDeleteMemoriesByProject(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	project, _ := input["project"].(string)
 
@@ -787,6 +760,7 @@ func (s *Service) handleDeleteMemoriesByProject(ctx context.Context, req *mcp.Ca
 	}, nil
 }
 
+// handleDeleteAllMemories delegates to DeleteAllMemories and returns a success confirmation.
 func (s *Service) handleDeleteAllMemories(ctx context.Context, req *mcp.CallToolRequest, input map[string]any) (*mcp.CallToolResult, map[string]any, error) {
 	if err := s.DeleteAllMemories(ctx); err != nil {
 		log.Printf("Error deleting all memories: %v", err)

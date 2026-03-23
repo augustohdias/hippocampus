@@ -45,8 +45,8 @@ type ErrorResponse struct {
 }
 
 // tryStartServer attempts to start HTTP server on a range of ports
-// starting from startPort, trying up to maxAttempts ports
-// Returns an open net.Listener on the available port, or error if all attempts fail
+// starting from startPort, trying up to maxAttempts ports.
+// Returns an open net.Listener on the available port, or error if all attempts fail.
 func tryStartServer(startPort string, maxAttempts int) (net.Listener, error) {
 	port, err := strconv.Atoi(startPort)
 	if err != nil {

@@ -77,6 +77,9 @@ The user wants you to create a memory. You MUST use the \`hippocampus_create_mem
 DO NOT skip this step. The user explicitly asked you to remember this information.`;
 
 const HIPPOCAMPUS_BINARY = process.env.HIPPOCAMPUS_BINARY || "hippocampus";
+const GLOBAL_MEMORY_LIMIT = process.env.HIPPOCAMPUS_GLOBAL_LIMIT || 10;
+const PROJECT_MEMORY_LIMIT = process.env.HIPPOCAMPUS_PROJECT_LIMIT || 10;
+const PERSONAL_MEMORY_LIMIT = process.env.HIPPOCAMPUS_PERSONAL_LIMIT || 10;
 const DEFAULT_PORT = 8765;
 const PORT_RANGE = 10; // Try ports 8765-8774
 
@@ -340,7 +343,7 @@ async function fetchMemoriesHTTP(project: string): Promise<Memory[] | null> {
 
   try {
     // Step 1: Fetch ALL project-specific memories with scope=project
-    const projectListUrl = `${apiBase}/list?project=${encodeURIComponent(project)}&scope=project&limit=1000`;
+    const projectListUrl = `${apiBase}/list?project=${encodeURIComponent(project)}&scope=project&limit=${PROJECT_MEMORY_LIMIT}`;
     log("Fetching ALL project-specific memories with scope=project", {
       projectListUrl,
     });
@@ -367,7 +370,7 @@ async function fetchMemoriesHTTP(project: string): Promise<Memory[] | null> {
     }
 
     // Step 2: Fetch ALL personal memories (scope=personal) with high limit
-    const personalListUrl = `${apiBase}/list?scope=personal&limit=1000`;
+    const personalListUrl = `${apiBase}/list?scope=personal&limit=${PERSONAL_MEMORY_LIMIT}`;
     log("Fetching ALL personal memories", { personalListUrl });
     const personalListResp = await fetch(personalListUrl);
 
@@ -391,7 +394,7 @@ async function fetchMemoriesHTTP(project: string): Promise<Memory[] | null> {
     }
 
     // Step 3: Fetch LAST 50 global memories (scope=global)
-    const globalListUrl = `${apiBase}/list?scope=global&limit=50`;
+    const globalListUrl = `${apiBase}/list?scope=global&limit=${GLOBAL_MEMORY_LIMIT}`;
     log("Fetching LAST 50 global memories", { globalListUrl });
     const globalListResp = await fetch(globalListUrl);
 

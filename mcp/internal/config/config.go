@@ -1,3 +1,6 @@
+// Package config provides an interface
+// for loading environment variables and
+// setting up various configuration aspects.
 package config
 
 import (
