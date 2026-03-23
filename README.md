@@ -1,7 +1,5 @@
 ![logo](./logo.png)
 
-# Hippocampus
-
 Locally record and access LLM agent memories across multiple sessions — without flooding your context window with irrelevant information.
 
 **Private, secure, and free.**
