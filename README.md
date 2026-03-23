@@ -1,9 +1,5 @@
 ![logo](./logo.png)
 
-# Hippocampus MCP Server
-
-An MCP (Model Context Protocol) server for creating and searching memories using embeddings and vector database.
-
 ## Prerequisites
 
 - Go 1.25+
