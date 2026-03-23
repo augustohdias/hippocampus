@@ -62,6 +62,7 @@ func (s *Service) EnsureCollection(ctx context.Context) error {
 // content, scope, and up to 5 individual keywords), and upserts a single Qdrant point
 // with all vectors attached. Returns the generated memory ID on success.
 func (s *Service) CreateMemory(ctx context.Context, project, context, content string, keywords []string, scope string) (uint64, error) {
+	project = sanitizeProject(project)
 	memoryID := generateID()
 
 	if scope == "" {
@@ -157,6 +158,7 @@ func (s *Service) CreateMemory(ctx context.Context, project, context, content st
 // (5) each keyword individually -> "keyword1" ... "keyword5".
 // Results are deduplicated by memory ID, keeping the highest similarity score.
 func (s *Service) SearchMemories(ctx context.Context, project, context, keywords, scope string, limit uint64) ([]qdrant.SearchResult, error) {
+	project = sanitizeProject(project)
 	type query struct {
 		text       string
 		vectorName string
@@ -287,6 +289,7 @@ func (s *Service) SearchMemories(ctx context.Context, project, context, keywords
 // ListMemories retrieves memories from Qdrant filtered by project and keywords,
 // then applies an optional in-memory scope filter before returning.
 func (s *Service) ListMemories(ctx context.Context, filterProject string, filterKeywords []string, scope string, limit uint64) ([]qdrant.Memory, error) {
+	filterProject = sanitizeProject(filterProject)
 	memories, err := s.qdrant.ListMemories(ctx, filterProject, filterKeywords, limit)
 	if err != nil {
 		return nil, err
@@ -311,6 +314,7 @@ func (s *Service) DeleteMemory(ctx context.Context, memoryID uint64) error {
 
 // DeleteMemoriesByProject removes all memory points associated with the given project.
 func (s *Service) DeleteMemoriesByProject(ctx context.Context, project string) error {
+	project = sanitizeProject(project)
 	return s.qdrant.DeleteMemoriesByProject(ctx, project)
 }
 
@@ -322,6 +326,19 @@ func (s *Service) DeleteAllMemories(ctx context.Context) error {
 // generateID returns a random uint64 to use as a memory point ID.
 func generateID() uint64 {
 	return rand.Uint64()
+}
+
+// sanitizeProject extracts the last non-empty path segment from project, so agents
+// that accidentally pass a full filesystem path (e.g. "/home/user/code/my-app")
+// are normalized to just the project name (e.g. "my-app").
+func sanitizeProject(project string) string {
+	parts := strings.Split(project, "/")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" {
+			return parts[i]
+		}
+	}
+	return project
 }
 
 // SetupTools registers all MCP tool handlers (create, search, list, delete) on the given server.

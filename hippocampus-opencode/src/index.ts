@@ -40,7 +40,7 @@ The user wants you to create a memory. You MUST use the \`hippocampus_create_mem
 - \`scope\`: Memory scope (optional, default: "project")
 
 **Special fields:**
-- \`project\`: Project name. This is mandatory if the scope is also "project".
+- \`project\`: Project name. This is mandatory if the scope is also "project". Only the last directory name of the current path.
 
 **Scope Guidance:**
 1. **Default scope is "project"**: Use for project-specific information (code style, setup, conventions).
@@ -488,17 +488,10 @@ export const HippocampusPlugin: Plugin = async (ctx: PluginInput) => {
       if (!state.hasInjectedMemories) {
         log("Injecting memories for first time or after compaction");
 
-        // Try HTTP API first
         var memories = await fetchMemoriesHTTP(project);
-        if (memories.length === 0) {
-          log(
-            "No memories found for this project, trying to retrieve directory.",
-          );
-          memories = await fetchMemoriesHTTP(directory);
-        }
 
         if (memories === null || memories.length === 0) {
-          log("Failed to fetch memories (HTTP API unavailable or error)");
+          log("No memories found.");
         } else {
           log(`Fetched ${memories.length} memories, injecting into context`);
 
