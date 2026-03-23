@@ -12,7 +12,7 @@ build-hippocampus-claude:
 	(cd hippocampus-claude && npm run build)
 
 # Install everything: binary + OpenCode plugin + Claude Code plugin + update configs
-install: clean build
+install: build
 	python3 setup/install.py
 
 # Install everything with auto-yes (for CI/CD)
