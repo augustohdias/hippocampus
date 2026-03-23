@@ -489,12 +489,16 @@ export const HippocampusPlugin: Plugin = async (ctx: PluginInput) => {
         log("Injecting memories for first time or after compaction");
 
         // Try HTTP API first
-        const memories = await fetchMemoriesHTTP(project);
+        var memories = await fetchMemoriesHTTP(project);
+        if (memories.length === 0) {
+          log(
+            "No memories found for this project, trying to retrieve directory.",
+          );
+          memories = await fetchMemoriesHTTP(directory);
+        }
 
-        if (memories === null) {
+        if (memories === null || memories.length === 0) {
           log("Failed to fetch memories (HTTP API unavailable or error)");
-        } else if (memories.length === 0) {
-          log("No memories found for this project");
         } else {
           log(`Fetched ${memories.length} memories, injecting into context`);
 
