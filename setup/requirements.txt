@@ -1,0 +1,3 @@
+# Python dependencies for setup/install.py
+# Currently uses only Python standard library modules
+# This file exists for documentation and future dependency tracking
