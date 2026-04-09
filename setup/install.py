@@ -301,7 +301,7 @@ def register_claude_plugin():
     if not claude_cmd:
         log_warn("Claude CLI not found in PATH. Skipping Claude Code plugin registration.")
         log_info("To manually register, run:")
-        print(f"  claude mcp add hippocampus --transport stdio -- hippocampus")
+        print(f"  claude mcp add --scope user hippocampus --transport stdio -- hippocampus")
         print(f"  # Plugin directory: {plugin_path}")
         print(f"  # Use --plugin-dir flag to load plugin: claude --plugin-dir {plugin_path}")
         return
@@ -313,7 +313,7 @@ def register_claude_plugin():
             log_info("Hippocampus MCP server already registered")
         else:
             log_info("Registering Hippocampus MCP server...")
-            subprocess.run([claude_cmd, "mcp", "add", "hippocampus", "--transport", "stdio", "--", "hippocampus"], check=True)
+            subprocess.run([claude_cmd, "mcp", "add", "--scope", "user", "hippocampus", "--transport", "stdio", "--", "hippocampus"], check=True)
             log_success("Hippocampus MCP server registered")
         
         # Validate plugin manifest
@@ -344,7 +344,7 @@ def register_claude_plugin():
     except subprocess.CalledProcessError as e:
         log_warn(f"Failed to register/install plugin: {e}")
         log_info("You may need to run the commands manually:")
-        print(f"  claude mcp add hippocampus --transport stdio -- hippocampus")
+        print(f"  claude mcp add --scope user hippocampus --transport stdio -- hippocampus")
         print(f"  # Plugin directory: {plugin_path}")
         print(f"  # Use --plugin-dir flag to load plugin: claude --plugin-dir {plugin_path}")
     except Exception as e:
