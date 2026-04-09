@@ -18,10 +18,10 @@ Collections are automatically configured with the correct dimensions on first us
 
 Hippocampus organizes memories into three scopes:
 
-| Scope | Behavior |
-|-------|----------|
-| **global** | Shared across all projects. Must be explicitly requested. |
-| **project** | Default scope. Loaded automatically when you open a session in the same project. |
+| Scope        | Behavior                                                                                |
+| ------------ | --------------------------------------------------------------------------------------- |
+| **global**   | Shared across all projects. Must be explicitly requested.                               |
+| **project**  | Default scope. Loaded automatically when you open a session in the same project.        |
 | **personal** | Loaded at every session start. Ideal for personal context, separate from workflow data. |
 
 Memories are injected at the start of each session. Each scope loads up to 10 memories by default — configurable via [environment variables](#environment-variables).
@@ -78,6 +78,7 @@ make install-yes  # same with auto-confirm (CI/CD)
    ```
 
 6. Build and run:
+
    ```bash
    make build
    make run
@@ -100,17 +101,16 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLLAMA_MODEL` | `qwen3-embedding:4b` | Embedding model |
-| `QDRANT_HOST` | `localhost:6334` | Qdrant gRPC endpoint |
-| `QDRANT_COLLECTION` | `memories` | Collection name |
-| `LOG_LEVEL` | `info` | Logging level |
-| `HIPPOCAMPUS_HTTP_PORT` | `8765` | HTTP API port |
-| `HIPPOCAMPUS_HTTP_ONLY` | (none) | Set to `"true"` to run HTTP-only mode |
-| `HIPPOCAMPUS_GLOBAL_LIMIT` | `10` | Max global memories loaded per session |
-| `HIPPOCAMPUS_PROJECT_LIMIT` | `10` | Max project memories loaded per session |
-| `HIPPOCAMPUS_PERSONAL_LIMIT` | `10` | Max personal memories loaded per session |
+| Variable                     | Default              | Description                              |
+| ---------------------------- | -------------------- | ---------------------------------------- |
+| `OLLAMA_MODEL`               | `qwen3-embedding:4b` | Embedding model                          |
+| `QDRANT_HOST`                | `localhost:6334`     | Qdrant gRPC endpoint                     |
+| `QDRANT_COLLECTION`          | `memories`           | Collection name                          |
+| `LOG_LEVEL`                  | `info`               | Logging level                            |
+| `HIPPOCAMPUS_HTTP_PORT`      | `8765`               | HTTP API port                            |
+| `HIPPOCAMPUS_GLOBAL_LIMIT`   | `10`                 | Max global memories loaded per session   |
+| `HIPPOCAMPUS_PROJECT_LIMIT`  | `10`                 | Max project memories loaded per session  |
+| `HIPPOCAMPUS_PERSONAL_LIMIT` | `10`                 | Max personal memories loaded per session |
 
 ## Uninstall
 
